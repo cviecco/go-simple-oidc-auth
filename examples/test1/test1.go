@@ -1,14 +1,19 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	//"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"sync"
+	"time"
 
 	oidc "github.com/coreos/go-oidc"
 
@@ -52,8 +57,147 @@ func loadVerifyConfigFile(configFilename string) (AppConfigFile, error) {
 		err = errors.New("Cannot parse config file")
 		return config, err
 	}
-
 	return config, nil
+}
+
+type pendingConfig struct {
+	ExpiresAt time.Time
+	Config    *oauth2.Config
+	//InBoundURL string
+	originalRequest *http.Request
+	state           string
+	ctx             *context.Context
+}
+
+type userInfo struct {
+	ExpiresAt time.Time
+	sub       string
+}
+
+type MiddlewareState struct {
+	commonConfig baseConfig
+	mutex        sync.Mutex
+	oidcConfig   map[string]pendingConfig //map of cookievalue back to state
+	authCookie   map[string]userInfo
+	ctx          *context.Context
+}
+
+var OidcAuthState MiddlewareState
+
+const redirectPath = "/auth/google/callback"
+const redirCookieName = "oidc_redir_cookie"
+const authCookieName = "oidc_auth_cookie"
+
+func writeFailureResponse(w http.ResponseWriter, code int, message string) {
+	w.WriteHeader(code)
+	publicErrorText := fmt.Sprintf("%d %s %s\n", code, http.StatusText(code), message)
+	w.Write([]byte(publicErrorText))
+}
+
+//func (state *RuntimeState) certGenHandler(w http.ResponseWriter, r *http.Request) {
+func (state *MiddlewareState) getUserInfo(r *http.Request) (*userInfo, error) {
+	cookie, err := r.Cookie("username")
+	if err != nil {
+		if err == http.ErrNoCookie {
+			return nil, nil
+		}
+		return nil, err
+	}
+	index := cookie.Value
+	state.mutex.Lock()
+	state.mutex.Unlock()
+	info, ok := state.authCookie[index]
+	state.mutex.Unlock()
+	if !ok {
+		return nil, nil
+	}
+	// TODO ADD expiration check!
+
+	return &info, nil
+}
+
+func genRandomString() (string, error) {
+	size := 32
+	rb := make([]byte, size)
+	_, err := rand.Read(rb)
+	if err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(rb), nil
+
+}
+
+func (state *MiddlewareState) createRedirectionToProvider(w http.ResponseWriter, r *http.Request) {
+	cookieVal, err := genRandomString()
+	if err != nil {
+		writeFailureResponse(w, http.StatusInternalServerError, "error internal")
+		log.Println(err)
+		return
+	}
+
+	// we have to create new context and set redirector...
+	//set the cookie and then redirect
+	expiration := time.Now().Add(60 * time.Second)
+	//create localstate!
+
+	//log.Printf("appConfig: %+v\n", appConfig)
+	//clientID = appConfig.Base.ClientID
+	//clientSecret = appConfig.Base.ClientSecret
+
+	////
+	//ctx := context.Background()
+
+	//OidcAuthState.ctx = &ctx
+
+	provider, err := oidc.NewProvider(*state.ctx, state.commonConfig.ProviderURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("prov:%+v", provider)
+	config := oauth2.Config{
+		ClientID:     state.commonConfig.ClientID,
+		ClientSecret: state.commonConfig.ClientSecret,
+		Endpoint:     provider.Endpoint(),
+		RedirectURL:  "http://127.0.0.1:5556/auth/google/callback",
+		//Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
+		Scopes: []string{oidc.ScopeOpenID, "profile"},
+	}
+
+	log.Printf("config : %+v", config)
+	stateString := "foobar" // Don't do this in production.
+
+	//http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	//http.Redirect(w, r, config.AuthCodeURL(state), http.StatusFound)
+	//})
+
+	cookie := http.Cookie{Name: redirCookieName, Value: cookieVal, Expires: expiration}
+	http.SetCookie(w, &cookie)
+
+	http.Redirect(w, r, config.AuthCodeURL(stateString), http.StatusFound)
+}
+
+func simpleAuth(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+		userInfo, err := OidcAuthState.getUserInfo(r)
+		if err != nil {
+			writeFailureResponse(w, http.StatusInternalServerError, "error internal")
+			log.Println(err)
+			return
+		}
+		if userInfo != nil {
+			//found actual user... call original
+			h.ServeHTTP(w, r)
+			log.Println("After")
+			return
+		}
+		// We dont have a valid user...
+		if r.URL.Path != redirectPath {
+			OidcAuthState.createRedirectionToProvider(w, r)
+			return
+		}
+
+	})
 }
 
 func main() {
@@ -67,7 +211,10 @@ func main() {
 	clientID = appConfig.Base.ClientID
 	clientSecret = appConfig.Base.ClientSecret
 
+	////
 	ctx := context.Background()
+
+	OidcAuthState.ctx = &ctx
 
 	provider, err := oidc.NewProvider(ctx, appConfig.Base.ProviderURL)
 	if err != nil {
