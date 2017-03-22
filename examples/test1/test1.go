@@ -1,9 +1,9 @@
 package main
 
 import (
-	"crypto/rand"
-	"encoding/base64"
-	"encoding/json"
+	//"crypto/rand"
+	//"encoding/base64"
+	//"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,15 +12,17 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"sync"
-	"time"
+	//"sync"
+	//"time"
 
-	oidc "github.com/coreos/go-oidc"
+	//oidc "github.com/coreos/go-oidc"
 
 	"gopkg.in/yaml.v2"
 
 	"golang.org/x/net/context"
-	"golang.org/x/oauth2"
+	//"golang.org/x/oauth2"
+
+	"git.symcpe.net/camilo_viecco1/go-simple-oidc-auth/authhandler"
 )
 
 var (
@@ -58,6 +60,7 @@ func loadVerifyConfigFile(configFilename string) (AppConfigFile, error) {
 	return config, nil
 }
 
+/*
 type pendingConfig struct {
 	ExpiresAt       time.Time
 	Config          *oauth2.Config
@@ -82,7 +85,8 @@ type SimpleOIDCAuth struct {
 	ctx          *context.Context
 }
 
-const redirectPath = "/auth/google/callback"
+//const redirectPath = "/auth/google/callback"
+const redirectPath = "/auth/oidcsimple/callback"
 const redirCookieName = "oidc_redir_cookie"
 const authCookieName = "oidc_auth_cookie"
 const randomStringEntropyBytes = 32
@@ -302,6 +306,7 @@ func NewSimpleOIDCAuth(ctx *context.Context, clientID string, clientSecret strin
 	oidcAuthState.authCookie = make(map[string]simpleUserInfo)
 	return &oidcAuthState
 }
+*/
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Hi there, I love %s!", r.URL.Path[1:])
@@ -319,7 +324,7 @@ func main() {
 
 	////
 	ctx := context.Background()
-	simpleOidcAuth := NewSimpleOIDCAuth(&ctx, appConfig.Base.ClientID, appConfig.Base.ClientSecret, appConfig.Base.ProviderURL)
+	simpleOidcAuth := authhandler.NewSimpleOIDCAuth(&ctx, appConfig.Base.ClientID, appConfig.Base.ClientSecret, appConfig.Base.ProviderURL)
 
 	//http.HandleFunc("/", handler)
 	finalHandler := http.HandlerFunc(handler)
