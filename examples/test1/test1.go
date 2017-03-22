@@ -148,27 +148,21 @@ func (state *MiddlewareState) createRedirectionToProvider(w http.ResponseWriter,
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	//scheme := r.URL.Scheme
 	redirectUrl := scheme + "://" + r.Host + redirectPath
 
 	//log.Printf("prov:%+v", provider)
-	log.Printf("URL (full) ='%+v'", r.URL)
-	log.Printf("URL (scheme) ='%+v'\n", r.URL.Scheme)
-	log.Printf("request='%+v'\n", r)
-	log.Printf("redirurl='%s'", redirectUrl)
 
 	config := oauth2.Config{
 		ClientID:     state.commonConfig.ClientID,
 		ClientSecret: state.commonConfig.ClientSecret,
 		Endpoint:     provider.Endpoint(),
-		//RedirectURL:  "http://127.0.0.1:5556/auth/google/callback",
-		RedirectURL: redirectUrl,
-		//Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
-		Scopes: []string{oidc.ScopeOpenID, "profile"},
+		RedirectURL:  redirectUrl,
+		Scopes:       []string{oidc.ScopeOpenID, "profile"},
 	}
 
 	log.Printf("config : %+v", config)
@@ -179,12 +173,6 @@ func (state *MiddlewareState) createRedirectionToProvider(w http.ResponseWriter,
 		log.Println(err)
 		return
 	}
-
-	//stateString := "foobar" // Don't do this in production.
-
-	//http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-	//http.Redirect(w, r, config.AuthCodeURL(state), http.StatusFound)
-	//})
 
 	cookie := http.Cookie{Name: redirCookieName, Value: cookieVal, Expires: expiration}
 	http.SetCookie(w, &cookie)
@@ -335,7 +323,6 @@ func main() {
 
 	//http.HandleFunc("/", handler)
 	finalHandler := http.HandlerFunc(handler)
-	//http.HandleFunc("/", simpleAuth(handler))
 	http.Handle("/", simpleAuth(finalHandler))
 	log.Printf("listening on http://%s/", "127.0.0.1:5556")
 	log.Fatal(http.ListenAndServe("127.0.0.1:5556", nil))
