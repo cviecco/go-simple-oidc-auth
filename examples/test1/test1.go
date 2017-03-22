@@ -89,6 +89,7 @@ const redirCookieName = "oidc_redir_cookie"
 const authCookieName = "oidc_auth_cookie"
 const randomStringEntropyBytes = 32
 const maxAgeSecondsRedirCookie = 300
+const maxAgeSecondsAuthCookie = 3600
 
 func writeFailureResponse(w http.ResponseWriter, code int, message string) {
 	w.WriteHeader(code)
@@ -155,8 +156,6 @@ func (state *MiddlewareState) createRedirectionToProvider(w http.ResponseWriter,
 	}
 	redirectUrl := scheme + "://" + r.Host + redirectPath
 
-	//log.Printf("prov:%+v", provider)
-
 	config := oauth2.Config{
 		ClientID:     state.commonConfig.ClientID,
 		ClientSecret: state.commonConfig.ClientSecret,
@@ -174,7 +173,8 @@ func (state *MiddlewareState) createRedirectionToProvider(w http.ResponseWriter,
 		return
 	}
 
-	cookie := http.Cookie{Name: redirCookieName, Value: cookieVal, Expires: expiration}
+	cookie := http.Cookie{Name: redirCookieName, Value: cookieVal,
+		Expires: expiration, Path: "/", HttpOnly: true}
 	http.SetCookie(w, &cookie)
 
 	pending := pendingConfig{ExpiresAt: expiration,
@@ -255,7 +255,7 @@ func (state *MiddlewareState) handleRedirectPath(w http.ResponseWriter, r *http.
 
 	// we have to create new context and set redirector...
 	//set the cookie and then redirect
-	expiration := time.Now().Add(3600 * time.Second)
+	expiration := time.Now().Add(maxAgeSecondsAuthCookie * time.Second)
 
 	authCookie := http.Cookie{Name: authCookieName, Value: cookieVal, Expires: expiration, Path: "/", HttpOnly: true}
 
@@ -265,12 +265,12 @@ func (state *MiddlewareState) handleRedirectPath(w http.ResponseWriter, r *http.
 	http.Redirect(w, r, pending.originalRequest.URL.String(), http.StatusFound)
 }
 
-func simpleAuth(h http.Handler) http.Handler {
+func (state *MiddlewareState) Handler(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if *debug {
 			log.Printf("Top os simple Auth target=%s\n", r.URL.String())
 		}
-		userInfo, err := OidcAuthState.getUserInfo(r)
+		userInfo, err := state.getUserInfo(r)
 		if err != nil {
 			writeFailureResponse(w, http.StatusInternalServerError, "error internal")
 			log.Println(err)
@@ -290,12 +290,20 @@ func simpleAuth(h http.Handler) http.Handler {
 			if *debug {
 				log.Printf("Doing redirection now")
 			}
-			OidcAuthState.createRedirectionToProvider(w, r)
+			state.createRedirectionToProvider(w, r)
 			return
 		}
-		OidcAuthState.handleRedirectPath(w, r, h)
+		state.handleRedirectPath(w, r, h)
 
 	})
+}
+
+func NewSimpleOIDCAuth(config baseConfig, ctx *context.Context) *MiddlewareState {
+	oidcAuthState := MiddlewareState{commonConfig: config, ctx: ctx}
+	oidcAuthState.oidcConfig = make(map[string]pendingConfig)
+	oidcAuthState.authCookie = make(map[string]simpleUserInfo)
+
+	return &oidcAuthState
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
@@ -310,20 +318,17 @@ func main() {
 		panic(err)
 	}
 	log.Printf("appConfig: %+v\n", appConfig)
-	clientID = appConfig.Base.ClientID
-	clientSecret = appConfig.Base.ClientSecret
+	//clientID = appConfig.Base.ClientID
+	//clientSecret = appConfig.Base.ClientSecret
 
 	////
 	ctx := context.Background()
-
-	OidcAuthState.ctx = &ctx
-	OidcAuthState.commonConfig = appConfig.Base
-	OidcAuthState.oidcConfig = make(map[string]pendingConfig)
-	OidcAuthState.authCookie = make(map[string]simpleUserInfo)
+	simpleOidcAuth := NewSimpleOIDCAuth(appConfig.Base, &ctx)
 
 	//http.HandleFunc("/", handler)
 	finalHandler := http.HandlerFunc(handler)
-	http.Handle("/", simpleAuth(finalHandler))
+	//http.Handle("/", OidcAuthState.Handler(finalHandler))
+	http.Handle("/", simpleOidcAuth.Handler(finalHandler))
 	log.Printf("listening on http://%s/", "127.0.0.1:5556")
 	log.Fatal(http.ListenAndServe("127.0.0.1:5556", nil))
 }
