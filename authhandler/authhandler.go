@@ -4,61 +4,18 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
-	//"errors"
-	//"flag"
 	"fmt"
-	//"io"
-	//"io/ioutil"
 	"log"
 	"net/http"
-	//"os"
 	"sync"
 	"time"
 
 	oidc "github.com/coreos/go-oidc"
 
-	//"gopkg.in/yaml.v2"
-
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 )
 
-/*
-var (
-	configFilename = flag.String("config", "config.yml", "The filename of the configuration")
-	debug          = flag.Bool("debug", true, "Enable debug messages to console")
-)
-
-type baseConfig struct {
-	ClientID     string
-	ClientSecret string
-	ProviderURL  string
-}
-
-type AppConfigFile struct {
-	Base baseConfig
-}
-
-func loadVerifyConfigFile(configFilename string) (AppConfigFile, error) {
-	var config AppConfigFile
-	if _, err := os.Stat(configFilename); os.IsNotExist(err) {
-		err = errors.New("mising config file failure")
-		return config, err
-	}
-	source, err := ioutil.ReadFile(configFilename)
-	if err != nil {
-		//panic(err)
-		err = errors.New("cannot read config file")
-		return config, err
-	}
-	err = yaml.Unmarshal(source, &config)
-	if err != nil {
-		err = errors.New("Cannot parse config file")
-		return config, err
-	}
-	return config, nil
-}
-*/
 type pendingConfig struct {
 	ExpiresAt       time.Time
 	Config          *oauth2.Config
@@ -83,7 +40,6 @@ type SimpleOIDCAuth struct {
 	ctx          *context.Context
 }
 
-//const redirectPath = "/auth/google/callback"
 const redirectPath = "/auth/oidcsimple/callback"
 const redirCookieName = "oidc_redir_cookie"
 const authCookieName = "oidc_auth_cookie"
@@ -143,7 +99,6 @@ func (state *SimpleOIDCAuth) createRedirectionToProvider(w http.ResponseWriter, 
 
 	// we have to create new context and set redirector...
 	expiration := time.Now().Add(maxAgeSecondsRedirCookie * time.Second)
-	//create localstate!
 
 	provider, err := oidc.NewProvider(*state.ctx, state.ProviderURL)
 	if err != nil {
@@ -304,31 +259,3 @@ func NewSimpleOIDCAuth(ctx *context.Context, clientID string, clientSecret strin
 	oidcAuthState.authCookie = make(map[string]simpleUserInfo)
 	return &oidcAuthState
 }
-
-/*
-func handler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Hi there, I love %s!", r.URL.Path[1:])
-}
-
-func main() {
-	flag.Parse()
-
-	appConfig, err := loadVerifyConfigFile(*configFilename)
-	if err != nil {
-		panic(err)
-	}
-	log.Printf("appConfig: %+v\n", appConfig)
-	//clientSecret = appConfig.Base.ClientSecret
-
-	////
-	ctx := context.Background()
-	simpleOidcAuth := NewSimpleOIDCAuth(&ctx, appConfig.Base.ClientID, appConfig.Base.ClientSecret, appConfig.Base.ProviderURL)
-
-	//http.HandleFunc("/", handler)
-	finalHandler := http.HandlerFunc(handler)
-	//http.Handle("/", OidcAuthState.Handler(finalHandler))
-	http.Handle("/", simpleOidcAuth.Handler(finalHandler))
-	log.Printf("listening on http://%s/", "127.0.0.1:5556")
-	log.Fatal(http.ListenAndServe("127.0.0.1:5556", nil))
-}
-*/
