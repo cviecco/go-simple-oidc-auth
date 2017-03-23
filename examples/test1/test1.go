@@ -21,14 +21,14 @@ var (
 	debug          = flag.Bool("debug", true, "Enable debug messages to console")
 )
 
-type baseConfig struct {
+type OidcConfig struct {
 	ClientID     string
 	ClientSecret string
 	ProviderURL  string
 }
 
 type AppConfigFile struct {
-	Base baseConfig
+	Openidc OidcConfig
 }
 
 func loadVerifyConfigFile(configFilename string) (AppConfigFile, error) {
@@ -58,15 +58,15 @@ func handler(w http.ResponseWriter, r *http.Request) {
 func main() {
 	flag.Parse()
 
-	appConfig, err := loadVerifyConfigFile(*configFilename)
+	config, err := loadVerifyConfigFile(*configFilename)
 	if err != nil {
 		panic(err)
 	}
-	log.Printf("appConfig: %+v\n", appConfig)
+	log.Printf("appConfig: %+v\n", config)
 
 	////
 	ctx := context.Background()
-	simpleOidcAuth := authhandler.NewSimpleOIDCAuth(&ctx, appConfig.Base.ClientID, appConfig.Base.ClientSecret, appConfig.Base.ProviderURL)
+	simpleOidcAuth := authhandler.NewSimpleOIDCAuth(&ctx, config.Openidc.ClientID, config.Openidc.ClientSecret, config.Openidc.ProviderURL)
 
 	//http.HandleFunc("/", handler)
 	finalHandler := http.HandlerFunc(handler)
