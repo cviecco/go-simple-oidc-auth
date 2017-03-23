@@ -57,9 +57,6 @@ func (state *SimpleOIDCAuth) getUserInfo(r *http.Request) (*simpleUserInfo, erro
 	cookie, err := r.Cookie(authCookieName)
 	if err != nil {
 		if err == http.ErrNoCookie {
-			//if *debug {
-			//	log.Printf("no auth cookie present")
-			//}
 			return nil, nil
 		}
 		return nil, err
@@ -203,7 +200,7 @@ func (state *SimpleOIDCAuth) handleRedirectPath(w http.ResponseWriter, r *http.R
 		log.Println(err)
 		return
 	}
-	savedUserInfo := simpleUserInfo{Sub: "foo"}
+	savedUserInfo := simpleUserInfo{Sub: resp.UserInfo.Subject}
 	state.mutex.Lock()
 	state.authCookie[cookieVal] = savedUserInfo
 	state.mutex.Unlock()
