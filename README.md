@@ -1,4 +1,4 @@
-# Project Title
+# go-simple-oidc-auth
 
 Simple openid connect middleware for authentication. This library aims to provide authentication for against openic provider using a minimum of dependencies and with minimal changes to already written projects.
 
