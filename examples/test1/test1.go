@@ -13,7 +13,7 @@ import (
 
 	"golang.org/x/net/context"
 
-	"git.symcpe.net/camilo_viecco1/go-simple-oidc-auth/authhandler"
+	"github.com/cviecco/go-simple-oidc-auth/authhandler"
 )
 
 var (
