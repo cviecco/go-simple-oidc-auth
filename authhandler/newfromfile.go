@@ -13,8 +13,12 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-var DefaultConfigFilename = "/etc/simple_auth_config.yml"
+/*
 
+var DefaultConfigFilename = "config.yml"
+var defaultOIDCAuth *SimpleOIDCAuth
+var defaultContext context.Context
+*/
 type OidcConfig struct {
 	ClientID     string
 	ClientSecret string

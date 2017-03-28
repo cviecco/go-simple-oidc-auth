@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +16,20 @@ import (
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 )
+
+const redirectPath = "/auth/oidcsimple/callback"
+const redirCookieName = "oidc_redir_cookie"
+const authCookieName = "oidc_auth_cookie"
+const randomStringEntropyBytes = 32
+
+var defaultOIDCAuth *SimpleOIDCAuth
+var defaultContext context.Context
+var maxAgeSecondsRedirCookie = 300
+var maxAgeSecondsAuthCookie = 3600
+var secsBetweenCleanup = 60
+
+var DefaultConfigFilename = "config.yml"
+var Debug = false
 
 type pendingConfig struct {
 	ExpiresAt       time.Time
@@ -30,6 +45,12 @@ type simpleUserInfo struct {
 	Sub       string
 }
 
+type UserInfo struct {
+	Id       string
+	Username *string
+	Domain   *string
+}
+
 type SimpleOIDCAuth struct {
 	ClientID     string
 	ClientSecret string
@@ -39,13 +60,6 @@ type SimpleOIDCAuth struct {
 	authCookie   map[string]simpleUserInfo
 	ctx          *context.Context
 }
-
-const redirectPath = "/auth/oidcsimple/callback"
-const redirCookieName = "oidc_redir_cookie"
-const authCookieName = "oidc_auth_cookie"
-const randomStringEntropyBytes = 32
-const maxAgeSecondsRedirCookie = 300
-const maxAgeSecondsAuthCookie = 3600
 
 func writeFailureResponse(w http.ResponseWriter, code int, message string) {
 	w.WriteHeader(code)
@@ -66,11 +80,20 @@ func (state *SimpleOIDCAuth) getUserInfo(r *http.Request) (*simpleUserInfo, erro
 	info, ok := state.authCookie[index]
 	state.mutex.Unlock()
 	if !ok {
-		log.Printf("Auth cookie not found")
+		if Debug {
+			log.Printf("Auth cookie not found")
+		}
 		return nil, nil
 	}
-	// TODO ADD expiration check!
-	log.Printf("Auth cookie found")
+	if Debug {
+		log.Printf("Auth cookie found")
+	}
+	if info.ExpiresAt.Before(time.Now()) {
+		return nil, nil
+	}
+	if Debug {
+		log.Printf("Valid Auth cookie found")
+	}
 
 	return &info, nil
 }
@@ -95,7 +118,7 @@ func (state *SimpleOIDCAuth) createRedirectionToProvider(w http.ResponseWriter, 
 	}
 
 	// we have to create new context and set redirector...
-	expiration := time.Now().Add(maxAgeSecondsRedirCookie * time.Second)
+	expiration := time.Now().Add(time.Duration(maxAgeSecondsRedirCookie) * time.Second)
 
 	provider, err := oidc.NewProvider(*state.ctx, state.ProviderURL)
 	if err != nil {
@@ -115,8 +138,9 @@ func (state *SimpleOIDCAuth) createRedirectionToProvider(w http.ResponseWriter, 
 		RedirectURL:  redirectUrl,
 		Scopes:       []string{oidc.ScopeOpenID, "profile"},
 	}
-
-	log.Printf("config : %+v", config)
+	if Debug {
+		log.Printf("config : %+v", config)
+	}
 
 	stateString, err := genRandomString()
 	if err != nil {
@@ -140,7 +164,7 @@ func (state *SimpleOIDCAuth) createRedirectionToProvider(w http.ResponseWriter, 
 	http.Redirect(w, r, config.AuthCodeURL(stateString), http.StatusFound)
 }
 
-func (state *SimpleOIDCAuth) handleRedirectPath(w http.ResponseWriter, r *http.Request, h http.Handler) {
+func (state *SimpleOIDCAuth) handleRedirectPath(w http.ResponseWriter, r *http.Request) {
 	redirCookie, err := r.Cookie(redirCookieName)
 	if err != nil {
 		if err == http.ErrNoCookie {
@@ -167,7 +191,9 @@ func (state *SimpleOIDCAuth) handleRedirectPath(w http.ResponseWriter, r *http.R
 		http.Error(w, "state did not match", http.StatusBadRequest)
 		return
 	}
-	log.Printf("req : %+v", r)
+	if Debug {
+		log.Printf("req : %+v", r)
+	}
 	oauth2Token, err := pending.Config.Exchange(*pending.ctx, r.URL.Query().Get("code"))
 	if err != nil {
 		log.Printf("ctx: %+v", *pending.ctx)
@@ -191,7 +217,9 @@ func (state *SimpleOIDCAuth) handleRedirectPath(w http.ResponseWriter, r *http.R
 		return
 	}
 	//w.Write(data)
-	log.Printf("%+s", data)
+	if Debug {
+		log.Printf("%+s", data)
+	}
 
 	//set new auth cookie!
 	cookieVal, err := genRandomString()
@@ -200,21 +228,31 @@ func (state *SimpleOIDCAuth) handleRedirectPath(w http.ResponseWriter, r *http.R
 		log.Println(err)
 		return
 	}
-	savedUserInfo := simpleUserInfo{Sub: resp.UserInfo.Subject}
+	expiration := time.Now().Add(time.Duration(maxAgeSecondsAuthCookie) * time.Second)
+	savedUserInfo := simpleUserInfo{Sub: resp.UserInfo.Subject, ExpiresAt: expiration}
 	state.mutex.Lock()
 	state.authCookie[cookieVal] = savedUserInfo
 	state.mutex.Unlock()
 
 	// we have to create new context and set redirector...
 	//set the cookie and then redirect
-	expiration := time.Now().Add(maxAgeSecondsAuthCookie * time.Second)
-
 	authCookie := http.Cookie{Name: authCookieName, Value: cookieVal, Expires: expiration, Path: "/", HttpOnly: true}
 
 	//use handler with original request.
 	http.SetCookie(w, &authCookie)
 
+	// TODO: ask the browser to cleaup up the cookie.... will let the the reaper clean it up
+	// from our local state...
+
 	http.Redirect(w, r, pending.originalRequest.URL.String(), http.StatusFound)
+}
+
+func (state *SimpleOIDCAuth) isInitializedCorrectly() bool {
+	if (state.ProviderURL == "") ||
+		(state.ClientID == "") {
+		return false
+	}
+	return true
 }
 
 func (state *SimpleOIDCAuth) Handler(h http.Handler) http.Handler {
@@ -222,6 +260,11 @@ func (state *SimpleOIDCAuth) Handler(h http.Handler) http.Handler {
 		//if *debug {
 		//	log.Printf("Top os simple Auth target=%s\n", r.URL.String())
 		//}
+		if !state.isInitializedCorrectly() {
+			writeFailureResponse(w, http.StatusInternalServerError, "Auth system not initialized correctly")
+			log.Println("state is NOT initialized")
+			return
+		}
 		userInfo, err := state.getUserInfo(r)
 		if err != nil {
 			writeFailureResponse(w, http.StatusInternalServerError, "error internal")
@@ -231,7 +274,7 @@ func (state *SimpleOIDCAuth) Handler(h http.Handler) http.Handler {
 		if userInfo != nil {
 			//found actual user... call original handler verbatim
 			h.ServeHTTP(w, r)
-			log.Println("After")
+			//log.Println("After")
 			return
 		}
 		//if *debug {
@@ -245,14 +288,106 @@ func (state *SimpleOIDCAuth) Handler(h http.Handler) http.Handler {
 			state.createRedirectionToProvider(w, r)
 			return
 		}
-		state.handleRedirectPath(w, r, h)
+		state.handleRedirectPath(w, r)
 
 	})
+}
+
+func (state *SimpleOIDCAuth) cleanupOldState() {
+	for {
+		start := time.Now()
+		state.mutex.Lock()
+		initAuthSize := len(state.authCookie)
+		for key, userInfo := range state.authCookie {
+			if userInfo.ExpiresAt.Before(start) {
+				delete(state.authCookie, key)
+			}
+		}
+		finalAuthSize := len(state.authCookie)
+
+		initPendingSize := len(state.oidcConfig)
+		for key, pending := range state.oidcConfig {
+			if pending.ExpiresAt.Before(start) {
+				delete(state.oidcConfig, key)
+			}
+		}
+		finalPendingSize := len(state.oidcConfig)
+		state.mutex.Unlock()
+
+		if Debug {
+			log.Printf("Auth Cookie sizes: before:(%d) after (%d)\n", initAuthSize, finalAuthSize)
+			log.Printf("Pending Cookie sizes: before:(%d) after (%d)\n", initPendingSize, finalPendingSize)
+		}
+
+		time.Sleep(time.Duration(secsBetweenCleanup) * time.Second)
+	}
+}
+
+// Returns the remote username associated with the request or empty string if
+// The user is not found
+func (state *SimpleOIDCAuth) GetRemoteUserInfo(r *http.Request) (*UserInfo, error) {
+	userInfo, err := state.getUserInfo(r)
+	if err != nil {
+		return nil, err
+	}
+	if userInfo == nil {
+		return nil, nil
+	}
+	outUserInfo := UserInfo{Id: userInfo.Sub}
+
+	sliced := strings.Split(userInfo.Sub, "@")
+	outUserInfo.Username = &sliced[0]
+	if len(sliced) > 1 {
+		outUserInfo.Domain = &sliced[1]
+	}
+	return &outUserInfo, nil
+
+}
+
+func (state *SimpleOIDCAuth) Handle(pattern string, handler http.Handler) {
+	http.Handle(pattern, state.Handler(handler))
+}
+
+func (state *SimpleOIDCAuth) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
+	http.Handle(pattern, state.Handler(http.HandlerFunc(handler)))
 }
 
 func NewSimpleOIDCAuth(ctx *context.Context, clientID string, clientSecret string, providerURL string) *SimpleOIDCAuth {
 	oidcAuthState := SimpleOIDCAuth{ClientID: clientID, ClientSecret: clientSecret, ProviderURL: providerURL, ctx: ctx}
 	oidcAuthState.oidcConfig = make(map[string]pendingConfig)
 	oidcAuthState.authCookie = make(map[string]simpleUserInfo)
+	go oidcAuthState.cleanupOldState()
 	return &oidcAuthState
+}
+
+func initDefault() {
+	defaultContext := context.Background()
+	config, err := loadVerifyConfigFile(DefaultConfigFilename)
+	if err != nil {
+		log.Printf("unknown or invalid default config... using the default oath will result in errors %s", err)
+	}
+	defaultOIDCAuth = NewSimpleOIDCAuth(&defaultContext, config.Openidc.ClientID, config.Openidc.ClientSecret, config.Openidc.ProviderURL)
+	http.HandleFunc(redirectPath, defaultOIDCAuth.handleRedirectPath)
+}
+
+func Handle(pattern string, handler http.Handler) {
+	if defaultOIDCAuth == nil {
+		initDefault()
+	}
+
+	defaultOIDCAuth.Handle(pattern, handler)
+}
+
+func HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
+	if defaultOIDCAuth == nil {
+		initDefault()
+	}
+	defaultOIDCAuth.HandleFunc(pattern, handler)
+}
+
+func GetRemoteUserInfo(r *http.Request) (*UserInfo, error) {
+	if defaultOIDCAuth == nil {
+		initDefault()
+	}
+	return defaultOIDCAuth.GetRemoteUserInfo(r)
 }
