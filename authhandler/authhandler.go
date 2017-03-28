@@ -28,7 +28,7 @@ var maxAgeSecondsRedirCookie = 300
 var maxAgeSecondsAuthCookie = 3600
 var secsBetweenCleanup = 60
 
-var DefaultConfigFilename = "config.yml"
+var DefaultConfigFilename = "/etc/openidc_config.yml"
 var Debug = false
 
 type pendingConfig struct {
