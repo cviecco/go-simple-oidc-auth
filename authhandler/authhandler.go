@@ -238,6 +238,10 @@ func (state *SimpleOIDCAuth) handleRedirectPath(w http.ResponseWriter, r *http.R
 	//set the cookie and then redirect
 	authCookie := http.Cookie{Name: authCookieName, Value: cookieVal, Expires: expiration, Path: "/", HttpOnly: true}
 
+	if (pending.originalRequest.TLS != nil) && (r.TLS != nil) {
+		authCookie.Secure = true
+	}
+
 	//use handler with original request.
 	http.SetCookie(w, &authCookie)
 
